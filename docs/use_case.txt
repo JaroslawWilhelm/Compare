@@ -1,21 +1,7 @@
-PROJEKT_USE_CASE
-Für ein besseres Verständnis, hier mein Use Case:
-Ein Unternehmen möchte eine neue CNC-Anlage kontrollieren/monitoren. Z.B. muss einmal die Anlage 100 Schrauben herstellen.
-Das Audit erstellt eine "Soll-Datei" (im CSV Format). Das ist eine Datei, die Daten enthält,
-wie die Maschine zu arbeiten hat. Z.B. Anzahl Vorgänge, Themperatur, Drehgeschwindigkeit, usw.
-Nachdem ein Mitarbeiter die 100 Schrauben produziert hat, liefert die Anlage die tatsächichen Daten,
-was die Anlage gemacht hat. Daraus wird eine "Ist-Datei" erstellt.
-Nun lädt der Mitarbeiter die zwei (CSV) Dateien in meine Anwendung rein und vergleicht sie auf Unterschiede.
-Z.B. wurde ein Unterschied in Themperatur festgestellt. Der Mitarbeiter geht der Sache nach und stellt z.B. fest - die Themperatur ist in Ordnung.
-Der Themperaturmesser ist kapput. Nun will er eine Notiz zu dem betroffenen Themperatur-Eintrag in der Ist-Datei machen.
-In meiner Anwendung kann er den Eintrag markieren und auf "Add Note" klicken. Er will Bilder vom Thermomesser,
-Video von den Schrauben (dass sie ok sind) und eine Textnotiz einfügen. Später kann ein interner Qualitätsmanager auch eine Notiz hinzufügen wollen.
-(um z.B. die Schrauben freizugeben oder zu sperren). Die Ist-Datei, mit den verknüpften Dateien (Text, Video, Bilder) wird vom Audit geprüft.
-Auch kann die Ist-Datei samt Verknüpfungen zum Streit zwischen dem Unternehmen und dem Verkäufer der Anlage genommen werden.
-Da es um die industrielle Produktion geht, muss die Datei archiviert werden um z.B. irgendwann bei juristischen Fragen über
-die Qualität der Schrauben (Stichwort Schadenersatz, etc.) ein Nachweis über die Korrektheit der Produktion sein.
-Somit muss die Datei langzeitig archivierbar sein, juristische Verwertbarkeit haben, Indurstriestandarts und die Standarts in Datenführung einhalten.
-Z.B. Datenintegrität, Auditierbarkeit, Identifizierbarkeit, usw. Genauso müssen alle Daten von der Ist-Datei evtl. in die firmeneigene Datenbank
-überführt werden. Sprich, ein Datenbank Mitarbeiter muss sicher, fehlerfrei alle verknüpften Dateien integer,
-relational und das mit gängigen Werkzeugen (Tools) automatisiert die angereicherte Ist-Datei ein seine Datenbank "einspeisen".
-Es ist essentiell, dass alle Steakholders meine Arbeit akzeptieren. Juristen, Auditoren, Qualitätsmanager, Datenbank Spezialisten, usw.
+A new CNC system in an industrial production environment requires monitoring.
+A "target file" (database, CSV, Excel, ODF) is created, specifying how the system is to operate.
+The system provides the actual data.
+The files are compared using the application.
+Functionality must be implemented to attach notes and documents to the comparison results.
+The comparison process (and the application itself) must meet the requirements of rigorous industrial audits.
+The goal is to support quality assurance.
