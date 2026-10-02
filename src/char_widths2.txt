@@ -1,0 +1,7 @@
+Char ◯ : 16 px
+Char ⬤ : 13 px
+Char ⭘ : 15 px
+Char 🔴 : 21 px
+Char ⭕ : 21 px
+Char ◍ : 12 px
+Char ◎ : 12 px

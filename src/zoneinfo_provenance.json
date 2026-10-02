@@ -1,0 +1,14 @@
+{
+  "description": "IANA Time Zone Database (TZif binary files), sourced from the official 'tzdata' package by the Python Software Foundation.",
+  "package_name": "tzdata",
+  "package_version": "2026.3",
+  "tzdata_version": "2026.3",
+  "iana_version": "Provider of IANA time zone data",
+  "source_url": "https://files.pythonhosted.org/packages/e5/6d/b53b99a9f2766d095985947a5782f1702cabb129a34f7a802d7197af832f/tzdata-2026.3-py2.py3-none-any.whl",
+  "sha256": "dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931",
+  "md5": "0514dbbecc44968238605e15d6b58939",
+  "filename": "tzdata-2026.3-py2.py3-none-any.whl",
+  "pypi_page": "https://pypi.org/project/tzdata/2026.3/",
+  "license": "Apache-2.0",
+  "fetched_by": "fetch_tzdata.py (Compare App setup utility)"
+}

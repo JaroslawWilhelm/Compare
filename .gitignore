@@ -1,0 +1,19 @@
+﻿# Alles ignorieren
+*
+!.gitignore
+
+# src erlauben
+!src/
+!src/**
+
+# AUSNAHME: tzdata in src blockieren!
+src/iana_tzdata/
+
+# docs/use_case.txt erlauben
+!docs/
+!docs/use_case.txt
+
+# Python-Caches blockieren
+__pycache__/
+*.py[cod]
+*.class
