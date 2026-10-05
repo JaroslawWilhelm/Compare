@@ -1,6 +1,7 @@
 A new CNC system in an industrial production environment requires monitoring.
-A "target file" (database, CSV, Excel, ODF) is created, specifying how the system is to operate.
-The system provides the actual data.
+The application is intended to compare entries from two files for equivalence, "greater than," "less than," etc.
+One file (Database, CSV, Excel, ODS, ODF), specifying how the system has to work.
+The other one describes what the CNC system actually did.
 The files are compared using the application.
 Functionality must be implemented to attach notes and documents to the comparison results.
 The comparison process (and the application itself) must meet the requirements of rigorous industrial audits.
