@@ -679,12 +679,14 @@ class FinishTab(tk.Frame):
                         is_greater = getattr(rule, 'check_greater', False)
                         is_less = getattr(rule, 'check_less', False)
                         is_tol = getattr(rule, 'check_tolerance', False)
+                        is_greater_eq = getattr(rule, 'check_greater_eq', False)
+                        is_less_eq = getattr(rule, 'check_less_eq', False)
                         
                         if is_tol:
                             method = f"Toleranz (±{getattr(rule, 'tolerance_value', 0)})"
-                        elif is_equiv and is_greater:
+                        elif is_greater_eq:
                             method = "Größergleich"
-                        elif is_equiv and is_less:
+                        elif is_less_eq:
                             method = "Kleinergleich"
                         elif is_greater:
                             method = "Größer"

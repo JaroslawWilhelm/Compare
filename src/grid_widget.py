@@ -629,10 +629,34 @@ class ComplianceGrid(tk.Frame):
                     cell_text_fg = self.colors["ignored_fg"]
                     cell_font = self.font_italic
                 
+                f_type = None
                 if (r, c) in self.cell_formats:
                     f_type = self.cell_formats[(r, c)]
+                elif getattr(self, 'status_dict', None):
+                    status = self.status_dict.get(str(val)) if val is not None else None
+                    if status:
+                        file_id = getattr(self, 'file_id', '1')
+                        if status == f'only{file_id}':
+                            f_type = "only"
+                        elif status in ('diffAmount', 'sameAmount'):
+                            f_type = status
+
+                view_mode = getattr(self, 'view_mode', 'all')
+                if view_mode != 'all':
+                    if (view_mode.startswith('only') and f_type != 'only') or \
+                       (view_mode == 'diffAmount' and f_type != 'diffAmount') or \
+                       (view_mode == 'sameAmount' and f_type != 'sameAmount'):
+                        val = ""
+                    # In Resultat-Dateien schalten wir die farbliche Markierung ab,
+                    # da bereits alle sichtbaren Zellen zu diesem Filter gehören.
+                    f_type = None
+
+                if f_type:
                     if f_type == "diff": bg_color = self.colors["diff_bg"]
                     elif f_type == "note": bg_color = self.colors["note_bg"]
+                    elif f_type == "only": bg_color = self.colors.get("color_false", self.colors.get("diff_bg", "#ff8080"))
+                    elif f_type == "sameAmount": bg_color = self.colors.get("color_true", "#90ee90")
+                    elif f_type == "diffAmount": bg_color = self.colors.get("color_count_diff", "#ff8000")
                     elif f_type == "ignored":
                         bg_color = self.colors["ignored_bg"]
                         cell_text_fg = self.colors["ignored_fg"]
@@ -640,10 +664,11 @@ class ComplianceGrid(tk.Frame):
                 elif is_invalid:
                     bg_color = "#ffcccc"
                     cell_text_fg = "#990000"
-                elif c in self.key_cols:
-                    bg_color = self.colors.get("key_bg", "#d4edda")
                 elif self._hovered_row == r:
                     bg_color = self.colors["hover_bg"]
+                
+                if c in self.key_cols:
+                    bg_color = self.colors.get("key_bg", "#d4edda")
                 
                 if self.selected_cell == (r, c) or c in self.selected_cols or r in self.selected_rows:
                     bg_color = self.colors["select_bg"]

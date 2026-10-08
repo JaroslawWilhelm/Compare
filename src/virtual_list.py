@@ -247,7 +247,8 @@ class MemoryVirtualList:
         self.cursor.execute(f"SELECT * FROM {table} WHERE ROWID = ?", (db_rowid,))
         r = self.cursor.fetchone()
         if r:
-            return r[-info["num_cols"]:] if info["num_cols"] > 0 else []
+            row_data = r[-info["num_cols"]:] if info["num_cols"] > 0 else []
+            return ["" if x is None else x for x in row_data]
         return None
 
     def get_sheet_hash(self, sheet_name):

@@ -6,6 +6,8 @@ class ComparisonRule:
     check_equivalent: bool = True
     check_greater: bool = False
     check_less: bool = False
+    check_greater_eq: bool = False
+    check_less_eq: bool = False
     check_tolerance: bool = False
     tolerance_value: float = 0.0
 

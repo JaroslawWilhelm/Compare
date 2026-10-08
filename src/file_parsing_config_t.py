@@ -52,6 +52,12 @@ class FileParsingConfig:
     
     sheet_ignore_columns: dict = field(default_factory=dict)
     sheet_ignore_rows: dict = field(default_factory=dict)
+    
+    # --- 3.5. Gespeicherte Datentypen (User Overrides) ---
+    sheet_column_types: dict = field(default_factory=dict)
+    sheet_column_is_auto: dict = field(default_factory=dict)
+    sheet_column_confidences: dict = field(default_factory=dict)
+    sheet_column_date_formats: dict = field(default_factory=dict)
 
     # --- 4. Zahlen & Formate (Kritisch) ---
     decimal_separator: str = field(default_factory=get_default_decimal_separator)
@@ -141,3 +147,27 @@ class FileParsingConfig:
         
     def set_ignore_rows(self, sheet_name: str, value: str):
         self.sheet_ignore_rows[sheet_name] = value
+
+    def get_column_types(self, sheet_name: str) -> dict:
+        return self.sheet_column_types.get(sheet_name, {})
+        
+    def set_column_types(self, sheet_name: str, value: dict):
+        self.sheet_column_types[sheet_name] = value
+
+    def get_column_is_auto(self, sheet_name: str) -> dict:
+        return self.sheet_column_is_auto.get(sheet_name, {})
+        
+    def set_column_is_auto(self, sheet_name: str, value: dict):
+        self.sheet_column_is_auto[sheet_name] = value
+
+    def get_column_confidences(self, sheet_name: str) -> dict:
+        return self.sheet_column_confidences.get(sheet_name, {})
+        
+    def set_column_confidences(self, sheet_name: str, value: dict):
+        self.sheet_column_confidences[sheet_name] = value
+
+    def get_column_date_formats(self, sheet_name: str) -> dict:
+        return self.sheet_column_date_formats.get(sheet_name, {})
+        
+    def set_column_date_formats(self, sheet_name: str, value: dict):
+        self.sheet_column_date_formats[sheet_name] = value

@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 import os
+import time
 import sys
 import json
 import stat
@@ -932,7 +933,7 @@ class Application(tk.Tk):
         self._add_custom_tab(self.tab_comparison, "7. Vergleichslogik")
         
         # Tab 8: Abschließen
-        self.tab_finish = FinishTab(self.settings_content_frame, on_save_settings_callback=self.cmd_save_settings)
+        self.tab_finish = FinishTab(self.settings_content_frame, on_start_comparison_callback=self.cmd_start_comparison, on_save_settings_callback=self.cmd_save_settings)
         self.tab_finish.on_sheet_pair_selected = self._on_row_mapping_sheet_pair_selected
         self.tab_finish.on_cols_changed = self._update_key_highlights
         self._add_custom_tab(self.tab_finish, "8. Abschließen")
@@ -1531,27 +1532,52 @@ class Application(tk.Tk):
         config = self.config1 if side == 1 else self.config2
         
         if v_list and hasattr(grid, '_headers') and not getattr(grid, '_types_detected', False):
+            sheet_name = getattr(v_list, 'active_sheet_name', 'default')
+            saved_types = config.get_column_types(sheet_name)
+            
             from type_detector import ColumnTypeDetector
             detector = ColumnTypeDetector(config)
-            bounds = self.get_valid_data_bounds(side, v_list.active_sheet_name)
-            col_types, col_ambig, col_conf, col_date_fmt = detector.detect_column_types(v_list, v_list.active_sheet_name, bounds=bounds)
+            bounds = self.get_valid_data_bounds(side, sheet_name)
+            col_types, col_ambig, col_conf, col_date_fmt = detector.detect_column_types(v_list, sheet_name, bounds=bounds)
             
             col_is_auto = {c: True for c in col_types}
-            for c, t in grid.column_types.items():
-                col_types[c] = t
-                if hasattr(grid, 'column_is_auto') and not grid.column_is_auto.get(c, True):
-                    col_is_auto[c] = False
-                elif c in grid.column_types:
-                    col_is_auto[c] = False
+            
+            if saved_types:
+                # Merge manually set types from config (Wasserfall-Logik)
+                saved_is_auto = config.get_column_is_auto(sheet_name)
+                saved_conf = config.get_column_confidences(sheet_name)
+                saved_date_formats = config.get_column_date_formats(sheet_name)
                 
-                if hasattr(grid, 'column_confidences') and c in grid.column_confidences:
-                    col_conf[c] = grid.column_confidences[c]
-                else:
-                    col_conf[c] = "100%"
-                col_ambig[c] = False
+                for c, is_auto in saved_is_auto.items():
+                    # If it was manually set by the user, keep it!
+                    if not is_auto and c in saved_types:
+                        col_types[c] = saved_types[c]
+                        col_is_auto[c] = False
+                        col_ambig[c] = False
+                        col_conf[c] = saved_conf.get(c, "100%")
+                        if c in saved_date_formats:
+                            col_date_fmt[c] = saved_date_formats[c]
+            
+            # Apply any existing manual types that might be on the grid itself
+            for c, t in grid.column_types.items():
+                if hasattr(grid, 'column_is_auto') and not grid.column_is_auto.get(c, True):
+                    col_types[c] = t
+                    col_is_auto[c] = False
+                    col_ambig[c] = False
+                    if hasattr(grid, 'column_confidences') and c in grid.column_confidences:
+                        col_conf[c] = grid.column_confidences[c]
+                    else:
+                        col_conf[c] = "100%"
                 
             grid.set_column_types(col_types, col_ambig, col_conf, col_date_fmt, col_is_auto)
             grid._types_detected = True
+            
+            # Für späteres Neuladen im Tab-Wechsel speichern
+            config.set_column_types(sheet_name, grid.column_types.copy())
+            config.set_column_is_auto(sheet_name, getattr(grid, 'column_is_auto', {}).copy())
+            config.set_column_confidences(sheet_name, getattr(grid, 'column_confidences', {}).copy())
+            if hasattr(grid, 'column_date_formats'):
+                config.set_column_date_formats(sheet_name, getattr(grid, 'column_date_formats', {}).copy())
 
     def _refresh_tree_types(self, side):
         tree = self.tree1 if side == 1 else self.tree2
@@ -1688,6 +1714,16 @@ class Application(tk.Tk):
             
         grid.redraw()
         self._refresh_tree_types(side)
+        self.tab_finish.update_summary(self)
+        
+        # User-Änderung in der Konfiguration persistieren
+        if v_list and hasattr(v_list, 'active_sheet_name'):
+            sheet_name = v_list.active_sheet_name
+            config.set_column_types(sheet_name, grid.column_types.copy())
+            config.set_column_is_auto(sheet_name, getattr(grid, 'column_is_auto', {}).copy())
+            config.set_column_confidences(sheet_name, getattr(grid, 'column_confidences', {}).copy())
+            if hasattr(grid, 'column_date_formats'):
+                config.set_column_date_formats(sheet_name, getattr(grid, 'column_date_formats', {}).copy())
         
     def _on_header_row_selected_from_grid(self, side, row_idx):
         config = self.config1 if side == 1 else self.config2
@@ -2212,6 +2248,14 @@ class Application(tk.Tk):
             if "Punkt" in value: config.decimal_separator = "."
             elif "Komma" in value: config.decimal_separator = ","
             else: config.decimal_separator = value
+            
+            if config.thousands_separator == config.decimal_separator and config.decimal_separator in [".", ","]:
+                new_thousand = "," if config.decimal_separator == "." else "."
+                config.thousands_separator = new_thousand
+                pg_struct = self.pg_struct1 if panel_idx == 1 else self.pg_struct2
+                new_label = "Komma (,)" if new_thousand == "," else "Punkt (.)"
+                pg_struct.update_property("Fmt.Thousand", new_label)
+
             grid_widget = self.grid_left if panel_idx == 1 else self.grid_right
             grid_widget.reset_types_state()
             grid_widget.redraw()
@@ -2222,6 +2266,14 @@ class Application(tk.Tk):
             elif "Komma" in value: config.thousands_separator = ","
             elif "Leerzeichen" in value: config.thousands_separator = " "
             else: config.thousands_separator = value
+            
+            if config.thousands_separator == config.decimal_separator and config.thousands_separator in [".", ","]:
+                new_decimal = "," if config.thousands_separator == "." else "."
+                config.decimal_separator = new_decimal
+                pg_struct = self.pg_struct1 if panel_idx == 1 else self.pg_struct2
+                new_label = "Komma (,)" if new_decimal == "," else "Punkt (.)"
+                pg_struct.update_property("Fmt.Decimal", new_label)
+
             grid_widget = self.grid_left if panel_idx == 1 else self.grid_right
             grid_widget.reset_types_state()
             grid_widget.redraw()
@@ -2557,6 +2609,47 @@ class Application(tk.Tk):
 
         def on_ok(*args):
             new_val = val_var.get()
+            
+            # Validate no overlapping values between the three categories
+            new_val_parsed = {v.strip().lower() for v in new_val.split(',')}
+            new_val_parsed.discard("")
+            
+            if prop_key == "NaValues":
+                set1 = {v.strip().lower() for v in config.true_values.split(',')}
+                set2 = {v.strip().lower() for v in config.false_values.split(',')}
+                name1, name2 = "'Wahr'", "'Falsch'"
+            elif prop_key == "TrueValues":
+                set1 = {v.strip().lower() for v in config.na_values.split(',')}
+                set2 = {v.strip().lower() for v in config.false_values.split(',')}
+                name1, name2 = "'Fehlend/Leer'", "'Falsch'"
+            else: # FalseValues
+                set1 = {v.strip().lower() for v in config.na_values.split(',')}
+                set2 = {v.strip().lower() for v in config.true_values.split(',')}
+                name1, name2 = "'Fehlend/Leer'", "'Wahr'"
+                
+            set1.discard("")
+            set2.discard("")
+                
+            intersection1 = new_val_parsed.intersection(set1)
+            intersection2 = new_val_parsed.intersection(set2)
+            
+            if intersection1 or intersection2:
+                from tkinter import messagebox
+                msg = []
+                if intersection1:
+                    msg.append(f"- Mit {name1}: {', '.join(intersection1)}")
+                if intersection2:
+                    msg.append(f"- Mit {name2}: {', '.join(intersection2)}")
+                
+                messagebox.showerror(
+                    "Konflikt erkannt", 
+                    "Es wurden Werte eingegeben, die bereits in einer anderen Kategorie verwendet werden:\n\n" + 
+                    "\n".join(msg) + 
+                    "\n\nEin Wert darf nur in genau einer Kategorie existieren.", 
+                    parent=top
+                )
+                return
+
             other_config = self.config2 if panel_idx == 1 else self.config1
             other_grid = self.pg_struct2 if panel_idx == 1 else self.pg_struct1
             other_data_grid = self.grid_right if panel_idx == 1 else self.grid_left
@@ -2836,6 +2929,32 @@ class Application(tk.Tk):
                     target_grid.set_data_bounds(config.get_data_start_row(text) - 1, config.get_data_end_row(text))
                     target_grid.set_ignored_rows(self._parse_ignored_rows(config.get_ignore_rows(text)))
                     target_grid.set_ignored_cols(self._parse_ignored_cols(config.get_ignore_columns(text), standard_headers))
+                    
+                    def _rgb_to_hex(rgb):
+                        return "#{:02x}{:02x}{:02x}".format(int(rgb[0]), int(rgb[1]), int(rgb[2])) if isinstance(rgb, tuple) and len(rgb) == 3 else rgb
+
+                    if hasattr(config, "color_false"):
+                        target_grid.colors["diff_bg"] = _rgb_to_hex(config.color_false)
+                        target_grid.colors["color_false"] = _rgb_to_hex(config.color_false)
+                    if hasattr(config, "color_true"):
+                        target_grid.colors["color_true"] = _rgb_to_hex(config.color_true)
+                    if hasattr(config, "color_count_diff"):
+                        target_grid.colors["color_count_diff"] = _rgb_to_hex(config.color_count_diff)
+                    sheet_info = next((s for s in v_list.sheets_info if s["name"] == text), None)
+                    if sheet_info:
+                        if "cell_formats" in sheet_info:
+                            target_grid.cell_formats = sheet_info["cell_formats"].copy()
+                        else:
+                            target_grid.cell_formats = {}
+                            
+                        if "status_dict" in sheet_info:
+                            target_grid.status_dict = sheet_info["status_dict"]
+                            target_grid.view_mode = sheet_info.get("view_mode", "all")
+                            target_grid.file_id = sheet_info.get("file_id", "1")
+                        else:
+                            target_grid.status_dict = None
+                            target_grid.view_mode = "all"
+                            target_grid.file_id = None
                 finally:
                     target_grid._batch_updating = False
                     target_grid._sync_and_redraw()
@@ -3269,6 +3388,21 @@ class Application(tk.Tk):
         target_grid.set_ignored_rows(self._parse_ignored_rows(config.get_ignore_rows(v_list.active_sheet_name)))
         target_grid.set_ignored_cols(self._parse_ignored_cols(config.get_ignore_columns(v_list.active_sheet_name), standard_headers))
         
+        def _rgb_to_hex(rgb):
+            return "#{:02x}{:02x}{:02x}".format(int(rgb[0]), int(rgb[1]), int(rgb[2])) if isinstance(rgb, tuple) and len(rgb) == 3 else rgb
+
+        if hasattr(config, "color_false"):
+            target_grid.colors["diff_bg"] = _rgb_to_hex(config.color_false)
+            target_grid.colors["color_false"] = _rgb_to_hex(config.color_false)
+        if hasattr(config, "color_true"):
+            target_grid.colors["color_true"] = _rgb_to_hex(config.color_true)
+        if hasattr(config, "color_count_diff"):
+            target_grid.colors["color_count_diff"] = _rgb_to_hex(config.color_count_diff)
+            
+        sheet_info = next((s for s in v_list.sheets_info if s["name"] == v_list.active_sheet_name), None)
+        if sheet_info and "cell_formats" in sheet_info:
+            target_grid.cell_formats = sheet_info["cell_formats"].copy()
+            
         self._restore_grid_scroll(side, target_grid, getattr(v_list, 'active_sheet_name', None))
             
         def validate_cell(col_idx, val):
@@ -3477,9 +3611,31 @@ class Application(tk.Tk):
             if side == 1:
                 self.config1 = new_config
                 config = self.config1
+                other_config = self.config2
+                other_pg = getattr(self, 'pg_struct2', None)
             else:
                 self.config2 = new_config
                 config = self.config2
+                other_config = self.config1
+                other_pg = getattr(self, 'pg_struct1', None)
+
+            # Gemeinsame Einstellungen zurücksetzen, damit beide Dateien synchron auf Standard sind
+            other_config.trim_whitespace = new_config.trim_whitespace
+            other_config.normalize_umlauts = new_config.normalize_umlauts
+            other_config.case_insensitive = new_config.case_insensitive
+            other_config.na_values = new_config.na_values
+            other_config.true_values = new_config.true_values
+            other_config.false_values = new_config.false_values
+            
+            # Mapping-Caches aller Tabs leeren, damit bei gleichnamigen Sheets alte Zuordnungen verworfen werden
+            if hasattr(self, 'tab_mapping') and hasattr(self.tab_mapping, 'clear_cache'):
+                self.tab_mapping.clear_cache()
+            if hasattr(self, 'tab_row_mapping') and hasattr(self.tab_row_mapping, 'clear_cache'):
+                self.tab_row_mapping.clear_cache()
+            if hasattr(self, 'tab_column_mapping') and hasattr(self.tab_column_mapping, 'clear_cache'):
+                self.tab_column_mapping.clear_cache()
+            if hasattr(self, 'tab_comparison') and hasattr(self.tab_comparison, 'clear_cache'):
+                self.tab_comparison.clear_cache()
 
             # Reset specific properties to Auto to trigger auto-detection
             config.encoding = "Auto"
@@ -3508,8 +3664,16 @@ class Application(tk.Tk):
             # Sofort die Struktur-Einstellungen im PropertyGrid aktualisieren und zu Tab 1 wechseln
             if side == 1:
                 self._populate_structure_grid(pg_struct, config, "Datei 1", active_sheet=v_list.active_sheet_name)
+                other_v_list = getattr(self, 'v_list2', None)
+                other_sheet = other_v_list.active_sheet_name if other_v_list else "default"
+                if other_pg:
+                    self._populate_structure_grid(other_pg, other_config, "Datei 2", active_sheet=other_sheet)
             else:
                 self._populate_structure_grid(pg_struct, config, "Datei 2", active_sheet=v_list.active_sheet_name)
+                other_v_list = getattr(self, 'v_list1', None)
+                other_sheet = other_v_list.active_sheet_name if other_v_list else "default"
+                if other_pg:
+                    self._populate_structure_grid(other_pg, other_config, "Datei 1", active_sheet=other_sheet)
             
             self._select_tab(0)
            
@@ -3696,6 +3860,349 @@ class Application(tk.Tk):
         self.wait_window(dialog)
         return result[0]
 
+    def cmd_start_comparison(self):
+        import time
+        start_time = time.perf_counter()
+        
+        # Zeigt das vorbereitete Sheet als neuen Knoten im Baum an
+        from data_preparator import DataPreparator
+        from tkinter import messagebox
+        import copy
+        from positional_comparator import PositionalComparator
+        
+        def compute_allowed_sets(mappings, v_list1, v_list2, config1, config2):
+            allowed = {1: {}, 2: {}}
+            for m in mappings:
+                s1_name = getattr(m, 'sheet1_name', None)
+                s2_name = getattr(m, 'sheet2_name', None)
+                if not s1_name or not s2_name:
+                    continue
+                    
+                s1_info = next((s for s in v_list1.sheets_info if s["name"] == s1_name), None) if v_list1 else None
+                s2_info = next((s for s in v_list2.sheets_info if s["name"] == s2_name), None) if v_list2 else None
+                if not s1_info or not s2_info:
+                    continue
+                    
+                cols1, cols2 = None, None
+                rows1, rows2 = None, None
+                
+                # Columns
+                col_mode = getattr(m, "column_matching_mode", "positional")
+                if col_mode in ("manual", "positional", "by_name"):
+                    cols1 = set()
+                    cols2 = set()
+                    for cm in m.column_mappings:
+                        if cm.col1_idx != -1 and cm.col2_idx != -1:
+                            cols1.add(cm.col1_idx)
+                            cols2.add(cm.col2_idx)
+                    for km in getattr(m, "key_mappings", []):
+                        for c1, c2 in zip(km.col1_indices, km.col2_indices):
+                            cols1.add(c1)
+                            cols2.add(c2)
+                
+                # Rows
+                row_mode = getattr(m, "row_matching_mode", "positional")
+                if row_mode == "key_based" and getattr(m, "key_mappings", []):
+                    km = m.key_mappings[0]
+                    if len(km.col1_indices) > 0 and len(km.col2_indices) > 0:
+                        c1_str = ", ".join([f'"Col_{c}"' for c in km.col1_indices])
+                        c2_str = ", ".join([f'"Col_{c}"' for c in km.col2_indices])
+                        
+                        def get_keys(v_list, config, sheet_name, c_str, s_info):
+                            end_idx = config.get_data_end_row(sheet_name)
+                            if end_idx <= 0:
+                                end_idx = v_list.num_rows
+                            start_idx = config.get_data_start_row(sheet_name)
+                            
+                            from data_preparator import DataPreparator
+                            ignore_rows_str = config.get_ignore_rows(sheet_name)
+                            ignored_rows = DataPreparator._parse_ignored_rows(ignore_rows_str)
+                            
+                            v_list.cursor.execute(f"SELECT ROWID, {c_str} FROM {s_info['table']}")
+                            rows = v_list.cursor.fetchall()
+                            
+                            keys = {}
+                            for r in rows:
+                                row_i = r[0] - 1
+                                if row_i in ignored_rows:
+                                    continue
+                                if start_idx - 1 <= row_i <= end_idx - 1:
+                                    key_tuple = tuple(str(x).strip() for x in r[1:])
+                                    if key_tuple not in keys:
+                                        keys[key_tuple] = []
+                                    keys[key_tuple].append(row_i)
+                            return keys
+                            
+                        keys1 = get_keys(v_list1, config1, s1_name, c1_str, s1_info)
+                        keys2 = get_keys(v_list2, config2, s2_name, c2_str, s2_info)
+                            
+                        common_keys = set(keys1.keys()).intersection(set(keys2.keys()))
+                        rows1 = set(r_idx for k in common_keys for r_idx in keys1[k])
+                        rows2 = set(r_idx for k in common_keys for r_idx in keys2[k])
+                elif row_mode == "positional":
+                    def get_valid_rows(v_list, config, sheet_name, s_info):
+                        if not v_list or not s_info: return []
+                        end_idx = config.get_data_end_row(sheet_name)
+                        if end_idx <= 0:
+                            end_idx = v_list.num_rows
+                        start_idx = config.get_data_start_row(sheet_name)
+                        
+                        from data_preparator import DataPreparator
+                        ignore_rows_str = config.get_ignore_rows(sheet_name)
+                        ignored_rows = DataPreparator._parse_ignored_rows(ignore_rows_str)
+                        
+                        v_list.cursor.execute(f"SELECT ROWID FROM {s_info['table']}")
+                        rows = v_list.cursor.fetchall()
+                        
+                        valid = []
+                        for r in rows:
+                            row_i = r[0] - 1
+                            if row_i in ignored_rows:
+                                continue
+                            if start_idx - 1 <= row_i <= end_idx - 1:
+                                valid.append(row_i)
+                        return valid
+                        
+                    valid1 = get_valid_rows(v_list1, config1, s1_name, s1_info)
+                    valid2 = get_valid_rows(v_list2, config2, s2_name, s2_info)
+                    
+                    min_len = min(len(valid1), len(valid2))
+                    rows1 = set(valid1[:min_len])
+                    rows2 = set(valid2[:min_len])
+                
+                allowed[1][s1_name] = {"cols": cols1, "rows": rows1}
+                allowed[2][s2_name] = {"cols": cols2, "rows": rows2}
+                
+            return allowed
+
+        def prepare_all_sheets(v_list, config, grid, tree, pg_struct, side, allowed_sets):
+            if not v_list: return False
+            
+            # Alte vorbereitete Sheets entfernen, damit sie nicht doppelt vorkommen
+            v_list.sheets_info = [s for s in v_list.sheets_info if not s["name"].startswith("[PREPARED]")]
+            
+            indices = list(range(len(v_list.sheets_info)))
+            added = False
+            for idx in indices:
+                sheet_name = v_list.sheets_info[idx]["name"]
+                
+                if sheet_name not in allowed_sets[side]:
+                    continue
+                    
+                allowed = allowed_sets[side][sheet_name]
+                allowed_cols = allowed["cols"]
+                allowed_rows = allowed["rows"]
+                
+                col_types = {}
+                has_tree_types = False
+                if tree:
+                    for child in tree.get_children(""):
+                        if tree.item(child, "text") == sheet_name:
+                            for i, col_node in enumerate(tree.get_children(child)):
+                                val = tree.set(col_node, "type")
+                                if val:
+                                    has_tree_types = True
+                                if "Zahl" in val:
+                                    col_types[i] = "Zahl"
+                                elif "Datum" in val:
+                                    col_types[i] = "Datum/Zeit"
+                                elif "Bool" in val:
+                                    col_types[i] = "Boolean"
+                                else:
+                                    col_types[i] = "Text"
+                            break
+                            
+                if not has_tree_types:
+                    from type_detector import ColumnTypeDetector
+                    detector = ColumnTypeDetector(config)
+                    end_idx = config.get_data_end_row(sheet_name)
+                    if end_idx <= 0:
+                        end_idx = v_list.num_rows
+                    bounds = {
+                        "data_start_row": config.get_data_start_row(sheet_name) - 1,
+                        "data_end_row": end_idx,
+                        "ignored_rows": self._parse_ignored_rows(config.get_ignore_rows(sheet_name))
+                    }
+                    detected_types, _, _, _ = detector.detect_column_types(v_list, sheet_name, bounds=bounds)
+                    col_types = detected_types
+                            
+                new_info = DataPreparator.prepare_sheet_for_test(v_list, idx, config, col_types, allowed_cols, allowed_rows)
+                if new_info:
+                    v_list.sheets_info.append(new_info)
+                    added = True
+                    
+            if added:
+                self._sync_tree_and_grid(v_list, grid, tree, os.path.basename(v_list.file_path), pg_struct, config, preserve_sheet=True)
+            return added
+
+        mappings = []
+        if hasattr(self, 'tab_mapping'):
+            mappings = getattr(self.tab_mapping, '_cached_mappings', [])
+            if not mappings and hasattr(self.tab_mapping, 'get_sheet_mappings'):
+                mappings = self.tab_mapping.get_sheet_mappings()
+                
+        if not mappings:
+            messagebox.showwarning("Fehler", "Keine Zuordnungen definiert.")
+            return
+
+        v_list1 = getattr(self, 'v_list1', None)
+        v_list2 = getattr(self, 'v_list2', None)
+        
+        if not v_list1 or not v_list2:
+            messagebox.showwarning("Fehler", "Beide Dateien müssen geladen sein.")
+            return
+            
+        allowed_sets = compute_allowed_sets(mappings, v_list1, v_list2, self.config1, self.config2)
+
+        prepared_1 = prepare_all_sheets(v_list1, self.config1, getattr(self, 'grid_left', None), getattr(self, 'tree1', None), getattr(self, 'pg_struct1', None), side=1, allowed_sets=allowed_sets)
+        prepared_2 = prepare_all_sheets(v_list2, self.config2, getattr(self, 'grid_right', None), getattr(self, 'tree2', None), getattr(self, 'pg_struct2', None), side=2, allowed_sets=allowed_sets)
+        
+        prepared_any = prepared_1 or prepared_2
+        prep_time = time.perf_counter() - start_time
+                
+        if not prepared_any:
+            messagebox.showwarning("Vorbereitung fehlgeschlagen", "Es konnten keine Dateien vorbereitet werden. Bitte laden Sie zuerst Daten.")
+            return
+
+        # Clear old DIFF/SAME sheets
+        v_list1.sheets_info = [s for s in v_list1.sheets_info if not s["name"].startswith("[DIFF]") and not s["name"].startswith("[SAME]") and not s["name"].startswith("[ONLY HERE]") and not s["name"].startswith("[DIFF AMOUNT]") and not s["name"].startswith("[SAME AMOUNT]")]
+        v_list2.sheets_info = [s for s in v_list2.sheets_info if not s["name"].startswith("[DIFF]") and not s["name"].startswith("[SAME]") and not s["name"].startswith("[ONLY HERE]") and not s["name"].startswith("[DIFF AMOUNT]") and not s["name"].startswith("[SAME AMOUNT]")]
+        
+        has_results = False
+        total_rows1 = 0
+        total_rows2 = 0
+        comp_types_used = set()
+        
+        comp_time_total = 0.0
+        mark_time_total = 0.0
+        
+        for m in mappings:
+            s1_name = getattr(m, 'sheet1_name', None)
+            s2_name = getattr(m, 'sheet2_name', None)
+            
+            # Find prepared sheets
+            prep_s1 = next((s for s in v_list1.sheets_info if s["name"] == f"[PREPARED] {s1_name}"), None)
+            prep_s2 = next((s for s in v_list2.sheets_info if s["name"] == f"[PREPARED] {s2_name}"), None)
+            
+            if prep_s1 and prep_s2:
+                total_rows1 += prep_s1.get("num_rows", 0)
+                total_rows2 += prep_s2.get("num_rows", 0)
+                
+                t0_comp = time.perf_counter()
+                if getattr(m, 'column_matching_mode', None) == 'cross_check':
+                    comp_types_used.add("Cross-Check")
+                    from crosscheck_comparator import CrossCheckComparator
+                    res = CrossCheckComparator.elementwise_sheet_vs_sheet(v_list1, prep_s1, v_list2, prep_s2, m)
+                else:
+                    comp_types_used.add("Positional")
+                    res = PositionalComparator.coordinatewise_sheet_vs_sheet(v_list1, prep_s1, v_list2, prep_s2, m)
+                comp_time_total += time.perf_counter() - t0_comp
+                has_results = True
+                
+                t0_mark = time.perf_counter()
+                orig_s1 = next((s for s in v_list1.sheets_info if s["name"] == s1_name), None)
+                def _extract_formats(v_list, table_name, orig_sheet, prep_sheet, format_type):
+                    v_list.cursor.execute(f"SELECT * FROM {table_name}")
+                    for row in v_list.cursor:
+                        if row[0] is None:
+                            continue
+                        prep_r_idx = row[0] - 1
+                        if "orig_row_map" in prep_sheet and 0 <= prep_r_idx < len(prep_sheet["orig_row_map"]):
+                            orig_r_idx = prep_sheet["orig_row_map"][prep_r_idx]
+                            for c_idx in range(1, len(row)):
+                                if row[c_idx] is not None:
+                                    prep_c_idx = c_idx - 1
+                                    if "orig_col_map" in prep_sheet and 0 <= prep_c_idx < len(prep_sheet["orig_col_map"]):
+                                        orig_c_idx = prep_sheet["orig_col_map"][prep_c_idx]
+                                        if orig_c_idx != -1:
+                                            orig_sheet.setdefault("cell_formats", {})[(orig_r_idx, orig_c_idx)] = format_type
+
+                import time
+                def _create_result_sheet(v_list, orig_sheet, suffix, format_type):
+                    new_table = f"final_{format_type}_{orig_sheet['table']}_{int(time.time())}"
+                    v_list.cursor.execute(f"CREATE TABLE {new_table} AS SELECT * FROM {orig_sheet['table']}")
+                    
+                    formats = orig_sheet.get("cell_formats", {})
+                    for c_idx in range(orig_sheet["num_cols"]):
+                        target_rowids = [r + 1 for (r, c), f in formats.items() if c == c_idx and f == format_type]
+                        if target_rowids:
+                            v_list.cursor.execute("CREATE TEMP TABLE IF NOT EXISTS tmp_rowids (id INTEGER)")
+                            v_list.cursor.execute("DELETE FROM tmp_rowids")
+                            for i in range(0, len(target_rowids), 500):
+                                chunk = target_rowids[i:i+500]
+                                values = ",".join([f"({x})" for x in chunk])
+                                v_list.cursor.execute(f"INSERT INTO tmp_rowids VALUES {values}")
+                            v_list.cursor.execute(f"UPDATE {new_table} SET \"Col_{c_idx}\" = NULL WHERE ROWID NOT IN (SELECT id FROM tmp_rowids)")
+                        else:
+                            v_list.cursor.execute(f"UPDATE {new_table} SET \"Col_{c_idx}\" = NULL")
+                            
+                    v_list.sheets_info.append({
+                        "name": f"[{suffix}] {orig_sheet['name']}",
+                        "table": new_table,
+                        "num_cols": orig_sheet["num_cols"],
+                        "num_rows": orig_sheet["num_rows"]
+                    })
+
+                if res.get('cross_check'):
+                    status_dict = res.get('status_dict', {})
+                    if orig_s1 and prep_s1:
+                        orig_s1["status_dict"] = status_dict
+                        orig_s1["file_id"] = "1"
+                        v_list1.sheets_info.append({"name": f"[ONLY HERE] {orig_s1['name']}", "table": orig_s1["table"], "num_cols": orig_s1["num_cols"], "num_rows": orig_s1["num_rows"], "view_mode": "only1", "status_dict": status_dict, "file_id": "1"})
+                        v_list1.sheets_info.append({"name": f"[DIFF AMOUNT] {orig_s1['name']}", "table": orig_s1["table"], "num_cols": orig_s1["num_cols"], "num_rows": orig_s1["num_rows"], "view_mode": "diffAmount", "status_dict": status_dict, "file_id": "1"})
+                        v_list1.sheets_info.append({"name": f"[SAME AMOUNT] {orig_s1['name']}", "table": orig_s1["table"], "num_cols": orig_s1["num_cols"], "num_rows": orig_s1["num_rows"], "view_mode": "sameAmount", "status_dict": status_dict, "file_id": "1"})
+
+                    orig_s2 = next((s for s in v_list2.sheets_info if s["name"] == s2_name), None)
+                    if orig_s2 and prep_s2:
+                        orig_s2["status_dict"] = status_dict
+                        orig_s2["file_id"] = "2"
+                        v_list2.sheets_info.append({"name": f"[ONLY HERE] {orig_s2['name']}", "table": orig_s2["table"], "num_cols": orig_s2["num_cols"], "num_rows": orig_s2["num_rows"], "view_mode": "only2", "status_dict": status_dict, "file_id": "2"})
+                        v_list2.sheets_info.append({"name": f"[DIFF AMOUNT] {orig_s2['name']}", "table": orig_s2["table"], "num_cols": orig_s2["num_cols"], "num_rows": orig_s2["num_rows"], "view_mode": "diffAmount", "status_dict": status_dict, "file_id": "2"})
+                        v_list2.sheets_info.append({"name": f"[SAME AMOUNT] {orig_s2['name']}", "table": orig_s2["table"], "num_cols": orig_s2["num_cols"], "num_rows": orig_s2["num_rows"], "view_mode": "sameAmount", "status_dict": status_dict, "file_id": "2"})
+                else:
+                    if orig_s1 and prep_s1:
+                        orig_s1["cell_formats"] = {}
+                        _extract_formats(v_list1, res['diff1']['table'], orig_s1, prep_s1, "diff")
+                        _extract_formats(v_list1, res['same1']['table'], orig_s1, prep_s1, "same")
+                        _create_result_sheet(v_list1, orig_s1, "DIFF", "diff")
+                        _create_result_sheet(v_list1, orig_s1, "SAME", "same")
+
+                    orig_s2 = next((s for s in v_list2.sheets_info if s["name"] == s2_name), None)
+                    if orig_s2 and prep_s2:
+                        orig_s2["cell_formats"] = {}
+                        _extract_formats(v_list2, res['diff2']['table'], orig_s2, prep_s2, "diff")
+                        _extract_formats(v_list2, res['same2']['table'], orig_s2, prep_s2, "same")
+                        _create_result_sheet(v_list2, orig_s2, "DIFF", "diff")
+                        _create_result_sheet(v_list2, orig_s2, "SAME", "same")
+                        
+                mark_time_total += time.perf_counter() - t0_mark
+        
+        if has_results:
+            t0_sync = time.perf_counter()
+            self._sync_tree_and_grid(v_list1, self.grid_left, self.tree1, os.path.basename(v_list1.file_path), self.pg_struct1, self.config1, preserve_sheet=True)
+            self._sync_tree_and_grid(v_list2, self.grid_right, self.tree2, os.path.basename(v_list2.file_path), self.pg_struct2, self.config2, preserve_sheet=True)
+            mark_time_total += time.perf_counter() - t0_sync
+            
+            elapsed = time.perf_counter() - start_time
+            comp_type_str = ", ".join(comp_types_used) if comp_types_used else "Unbekannt"
+            msg = (
+                f"Vergleich erfolgreich abgeschlossen!\n"
+                f"Die Ergebnisse sind in den Dateibäumen verfügbar.\n\n"
+                f"Art des Vergleiches: {comp_type_str}\n"
+                f"Verglichene Einträge (Datei 1): {total_rows1}\n"
+                f"Verglichene Einträge (Datei 2): {total_rows2}\n\n"
+                f"Zeiten-Details:\n"
+                f" - Dateivorbereitung: {prep_time:.3f} s\n"
+                f" - Vergleich (DB):    {comp_time_total:.3f} s\n"
+                f" - Markieren & UI:    {mark_time_total:.3f} s\n"
+                f"----------------------------------------\n"
+                f"Gesamte verstrichene Zeit: {elapsed:.3f} Sekunden"
+            )
+            print("Erfolg:\n", msg)
+            # messagebox.showinfo("Erfolg", msg)
+        else:
+            messagebox.showwarning("Fehler", "Vergleich konnte nicht durchgeführt werden. Überprüfen Sie die Zuordnungen.")
+
     def cmd_save_settings(self):
         filepath = filedialog.asksaveasfilename(
             title="Einstellungen speichern",
@@ -3769,6 +4276,8 @@ class Application(tk.Tk):
                                 "check_equivalent": cm.rule.check_equivalent,
                                 "check_greater": cm.rule.check_greater,
                                 "check_less": cm.rule.check_less,
+                                "check_greater_eq": cm.rule.check_greater_eq,
+                                "check_less_eq": cm.rule.check_less_eq,
                                 "check_tolerance": cm.rule.check_tolerance,
                                 "tolerance_value": cm.rule.tolerance_value
                             }
@@ -3934,6 +4443,8 @@ class Application(tk.Tk):
                         check_equivalent=rd.get("check_equivalent", True),
                         check_greater=rd.get("check_greater", False),
                         check_less=rd.get("check_less", False),
+                        check_greater_eq=rd.get("check_greater_eq", False),
+                        check_less_eq=rd.get("check_less_eq", False),
                         check_tolerance=rd.get("check_tolerance", False),
                         tolerance_value=rd.get("tolerance_value", 0.0)
                     )

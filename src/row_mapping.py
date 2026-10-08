@@ -29,6 +29,18 @@ class RowMappingView(tk.Frame):
         self.zoom_manager_left = ZoomManager(self.left_frame, zoom_id="row_mapping_panel")
         self.zoom_manager_right = ZoomManager(self.right_frame, zoom_id="row_mapping_grid")
         
+    def clear_cache(self):
+        self.active_mapping_idx = None
+        self._editing_state = "none"
+        self._pending_left = None
+        self._pending_right = None
+        self.selected_left_idx = -1
+        self.selected_right_idx = -1
+        self._current_grid_data = []
+        if hasattr(self, 'grid_keys'):
+            self.grid_keys.set_data([], ["Spalte Links", "Spalte Rechts"])
+            self.grid_keys.redraw()
+
     def _setup_ui(self):
         # Haupt-PanedWindow für Links/Rechts-Aufteilung
         self.paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4, bd=0, bg="#dcdcdc")

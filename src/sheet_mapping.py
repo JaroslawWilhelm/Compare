@@ -404,3 +404,11 @@ class SheetMappingView(tk.Frame):
                 
         self._cached_mappings = new_mappings
         return new_mappings
+
+    def clear_cache(self):
+        """Clears the mapping cache and manual overrides so that new file structures do not inherit old assignments."""
+        self._cached_mappings = []
+        self.manual_mappings = []
+        self._pending_left = ""
+        self._pending_right = ""
+        self._editing_state = "none"

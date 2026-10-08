@@ -19,6 +19,14 @@ class ComparisonLogicView(tk.Frame):
         self._setup_ui()
         self.zoom_manager = ZoomManager(self, zoom_id="comparison_logic")
         
+    def clear_cache(self):
+        self.active_mapping_idx = None
+        self._selected_item = None
+        
+        if hasattr(self, 'tree'):
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
     def _setup_ui(self):
         # Top label
         self.lbl_title = tk.Label(self, text="Vergleichslogik definieren", font=("Segoe UI", 12, "bold"), bg="#ffffff", fg="#5f6368")
@@ -34,7 +42,7 @@ class ComparisonLogicView(tk.Frame):
         style.configure("Comparison.Treeview.Heading", font=("Segoe UI", 11, "bold"), foreground="#5f6368", background="#ffffff")
         style.layout("Comparison.Treeview", [('Comparison.Treeview.treearea', {'sticky': 'nswe'})])
         
-        self.tree = ttk.Treeview(frame_body, columns=("equiv", "greater", "less", "tol", "tol_val", "dummy"), show="tree headings", style="Comparison.Treeview")
+        self.tree = ttk.Treeview(frame_body, columns=("equiv", "greater", "less", "greater_eq", "less_eq", "tol", "tol_val", "dummy"), show="tree headings", style="Comparison.Treeview")
         
         # Scrollbars
         self.scrollbar = ttk.Scrollbar(frame_body, orient="vertical", command=self.tree.yview)
@@ -51,7 +59,8 @@ class ComparisonLogicView(tk.Frame):
         self.tree.column("#0", width=320, minwidth=100, anchor="w", stretch=tk.NO)
         
         headers = [("equiv", "Äquivalent", 110), ("greater", "Größer", 110), 
-                   ("less", "Kleiner", 110), ("tol", "Toleranz", 110), ("tol_val", "Toleranzwert", 140)]
+                   ("less", "Kleiner", 110), ("greater_eq", "Größergleich", 110),
+                   ("less_eq", "Kleinergleich", 110), ("tol", "Toleranz", 110), ("tol_val", "Toleranzwert", 140)]
                    
         for col_id, title, w in headers:
             self.tree.heading(col_id, text=title, anchor="center")
@@ -141,6 +150,38 @@ class ComparisonLogicView(tk.Frame):
 
     def load_mappings(self, mappings: list[SheetMapping]):
         self.sheet_mappings = mappings
+        
+        # Ensure types are available so we can enforce restrictions (like no greater/less for Text)
+        app = self.winfo_toplevel()
+        if hasattr(app, 'config1') and hasattr(app, 'config2'):
+            try:
+                from type_detector import ColumnTypeDetector
+                det1 = ColumnTypeDetector(app.config1)
+                det2 = ColumnTypeDetector(app.config2)
+                
+                for s_map in mappings:
+                    if s_map.sheet1_name and not app.config1.get_column_types(s_map.sheet1_name):
+                        v1 = getattr(app, 'v_list1', None)
+                        if v1:
+                            old = getattr(v1, 'active_sheet_name', None)
+                            if hasattr(v1, 'set_active_sheet'): v1.set_active_sheet(s_map.sheet1_name)
+                            b1 = app.get_valid_data_bounds(1, s_map.sheet1_name) if hasattr(app, 'get_valid_data_bounds') else None
+                            types1, _, _, _ = det1.detect_column_types(v1, s_map.sheet1_name, bounds=b1)
+                            if types1: app.config1.set_column_types(s_map.sheet1_name, types1)
+                            if hasattr(v1, 'set_active_sheet') and old: v1.set_active_sheet(old)
+                            
+                    if s_map.sheet2_name and not app.config2.get_column_types(s_map.sheet2_name):
+                        v2 = getattr(app, 'v_list2', None)
+                        if v2:
+                            old = getattr(v2, 'active_sheet_name', None)
+                            if hasattr(v2, 'set_active_sheet'): v2.set_active_sheet(s_map.sheet2_name)
+                            b2 = app.get_valid_data_bounds(2, s_map.sheet2_name) if hasattr(app, 'get_valid_data_bounds') else None
+                            types2, _, _, _ = det2.detect_column_types(v2, s_map.sheet2_name, bounds=b2)
+                            if types2: app.config2.set_column_types(s_map.sheet2_name, types2)
+                            if hasattr(v2, 'set_active_sheet') and old: v2.set_active_sheet(old)
+            except Exception as e:
+                print(f"Type detection error in comparison logic: {e}")
+
         self._populate_tree()
 
     def _populate_tree(self):
@@ -156,7 +197,8 @@ class ComparisonLogicView(tk.Frame):
         RADIO_OFF = "○"
         
         for s_idx, s_map in enumerate(self.sheet_mappings):
-            if not s_map.column_mappings: continue
+            is_cross_col = (s_map.column_matching_mode == "cross_check")
+            if not s_map.column_mappings and not is_cross_col: continue
             
             sheet_iid = f"sheet_{s_idx}"
             sheet_name1 = s_map.sheet1_name or "?"
@@ -166,12 +208,25 @@ class ComparisonLogicView(tk.Frame):
             
             # Row 1: Sheet names
             self.tree.insert("", "end", iid=sheet_iid, text=f"[{sheet_name1}] \u2194 [{sheet_name2}]", 
-                             values=("", "", "", "", ""), tags=("header_row",), open=is_open)
+                             values=("", "", "", "", "", "", ""), tags=("header_row",), open=is_open)
+                             
+            if is_cross_col:
+                empty_iid = f"sheet_{s_idx}_empty"
+                self.tree.insert(sheet_iid, "end", iid=empty_iid, text="", values=("", "", "", "", "", "", ""), tags=("empty_row",))
+
+                col_text = "    Alle Elemente \u279d Alle Elemente (Cross-Check)"
+                row_iid = f"col_{s_idx}_cross"
+                
+                self.tree.insert(sheet_iid, "end", iid=row_iid, text=col_text,
+                                 values=(RADIO_ON, "", "", "", "", "", ""), tags=("key_even",))
+                continue
                              
             # Determine logic for "Select All"
             all_equiv = True
             all_greater = True
             all_less = True
+            all_greater_eq = True
+            all_less_eq = True
             all_tol = True
             has_editable_rows = False
             
@@ -189,24 +244,28 @@ class ComparisonLogicView(tk.Frame):
                     if not c_map.rule.check_equivalent: all_equiv = False
                     if not c_map.rule.check_greater: all_greater = False
                     if not c_map.rule.check_less: all_less = False
+                    if not getattr(c_map.rule, 'check_greater_eq', False): all_greater_eq = False
+                    if not getattr(c_map.rule, 'check_less_eq', False): all_less_eq = False
                     if not c_map.rule.check_tolerance: all_tol = False
             
             if not has_editable_rows:
-                all_equiv = all_greater = all_less = all_tol = False
+                all_equiv = all_greater = all_less = all_greater_eq = all_less_eq = all_tol = False
 
             # Row 2: Select All
             sa_equiv = RADIO_ON if all_equiv and has_editable_rows else RADIO_OFF
             sa_greater = RADIO_ON if all_greater and has_editable_rows else RADIO_OFF
             sa_less = RADIO_ON if all_less and has_editable_rows else RADIO_OFF
+            sa_greater_eq = RADIO_ON if all_greater_eq and has_editable_rows else RADIO_OFF
+            sa_less_eq = RADIO_ON if all_less_eq and has_editable_rows else RADIO_OFF
             sa_tol = RADIO_ON if all_tol and has_editable_rows else RADIO_OFF
             
             sa_iid = f"sheet_{s_idx}_selectall"
             self.tree.insert(sheet_iid, "end", iid=sa_iid, text="", 
-                             values=(sa_equiv, sa_greater, sa_less, sa_tol, ""), tags=("select_all",))
+                             values=(sa_equiv, sa_greater, sa_less, sa_greater_eq, sa_less_eq, sa_tol, ""), tags=("select_all",))
                              
             # Row 3: Empty row
             empty_iid = f"sheet_{s_idx}_empty"
-            self.tree.insert(sheet_iid, "end", iid=empty_iid, text="", values=("", "", "", "", ""), tags=("empty_row",))
+            self.tree.insert(sheet_iid, "end", iid=empty_iid, text="", values=("", "", "", "", "", "", ""), tags=("empty_row",))
             
             # Rows 4+: Mapped columns
             for r_idx, c_map in enumerate(s_map.column_mappings):
@@ -222,6 +281,8 @@ class ComparisonLogicView(tk.Frame):
                     c_map.rule.check_equivalent = True
                     c_map.rule.check_greater = False
                     c_map.rule.check_less = False
+                    c_map.rule.check_greater_eq = False
+                    c_map.rule.check_less_eq = False
                     c_map.rule.check_tolerance = False
                     
                 marker1 = "🔑 " if is_key1 else ""
@@ -233,11 +294,13 @@ class ComparisonLogicView(tk.Frame):
                 v_equiv = RADIO_ON if c_map.rule.check_equivalent else RADIO_OFF
                 v_greater = RADIO_ON if c_map.rule.check_greater else RADIO_OFF
                 v_less = RADIO_ON if c_map.rule.check_less else RADIO_OFF
+                v_greater_eq = RADIO_ON if getattr(c_map.rule, 'check_greater_eq', False) else RADIO_OFF
+                v_less_eq = RADIO_ON if getattr(c_map.rule, 'check_less_eq', False) else RADIO_OFF
                 v_tol = RADIO_ON if c_map.rule.check_tolerance else RADIO_OFF
                 v_tol_val = str(c_map.rule.tolerance_value) if c_map.rule.check_tolerance else ""
                 
                 if is_key:
-                    v_greater = v_less = v_tol = ""
+                    v_greater = v_less = v_greater_eq = v_less_eq = v_tol = ""
                     
                 row_iid = f"col_{s_idx}_{r_idx}"
                 is_even = (r_idx % 2 == 0)
@@ -247,7 +310,7 @@ class ComparisonLogicView(tk.Frame):
                     tag = "mapping_even" if is_even else "mapping_odd"
                     
                 self.tree.insert(sheet_iid, "end", iid=row_iid, text=col_text,
-                                 values=(v_equiv, v_greater, v_less, v_tol, v_tol_val), tags=(tag,))
+                                 values=(v_equiv, v_greater, v_less, v_greater_eq, v_less_eq, v_tol, v_tol_val), tags=(tag,))
 
     def _get_base_tag(self, iid):
         if iid.endswith("_selectall"):
@@ -259,6 +322,8 @@ class ComparisonLogicView(tk.Frame):
         elif iid.startswith("col_"):
             parts = iid.split("_")
             s_idx = int(parts[1])
+            if parts[2] == "cross":
+                return "key_even"
             r_idx = int(parts[2])
             s_map = self.sheet_mappings[s_idx]
             c_map = s_map.column_mappings[r_idx]
@@ -371,14 +436,18 @@ class ComparisonLogicView(tk.Frame):
         except ValueError:
             return
             
-        # We only care about columns 1, 2, 3, 4 (checkboxes) and 5 (tolerance value)
-        if col_idx < 1 or col_idx > 5: return
+        # We only care about columns 1, 2, 3, 4, 5, 6 (checkboxes) and 7 (tolerance value)
+        if col_idx < 1 or col_idx > 7: return
         
         if item_id.endswith("_selectall"):
-            if col_idx > 4: return # No select all for tolerance value
+            if col_idx > 6: return # No select all for tolerance value
             parts = item_id.split("_")
             s_idx = int(parts[1])
             s_map = self.sheet_mappings[s_idx]
+            
+            app = self.winfo_toplevel()
+            config1 = getattr(app, 'config1', None)
+            config2 = getattr(app, 'config2', None)
             
             # Determine current state for this column to toggle it
             # We toggle to True, unless ALL are currently True, then we toggle to False
@@ -392,16 +461,25 @@ class ComparisonLogicView(tk.Frame):
                             is_key = True
                             break
                 if not is_key:
+                    if col_idx in (2, 3, 4, 5):
+                        t1 = config1.sheet_column_types.get(s_map.sheet1_name, {}).get(c_map.col1_idx, "") if config1 else ""
+                        t2 = config2.sheet_column_types.get(s_map.sheet2_name, {}).get(c_map.col2_idx, "") if config2 else ""
+                        if any(x in t1 for x in ["Text", "Bool"]) or any(x in t2 for x in ["Text", "Bool"]):
+                            continue
+                            
                     has_rows = True
                     if col_idx == 1 and not c_map.rule.check_equivalent: all_true = False
                     if col_idx == 2 and not c_map.rule.check_greater: all_true = False
                     if col_idx == 3 and not c_map.rule.check_less: all_true = False
-                    if col_idx == 4 and not c_map.rule.check_tolerance: all_true = False
+                    if col_idx == 4 and not getattr(c_map.rule, 'check_greater_eq', False): all_true = False
+                    if col_idx == 5 and not getattr(c_map.rule, 'check_less_eq', False): all_true = False
+                    if col_idx == 6 and not c_map.rule.check_tolerance: all_true = False
                     
             if not has_rows: return
             new_state = not all_true
             
             # Apply new state
+            skipped_any = False
             for c_map in s_map.column_mappings:
                 is_key = False
                 if s_map.row_matching_mode == "key_based":
@@ -410,38 +488,84 @@ class ComparisonLogicView(tk.Frame):
                             is_key = True
                             break
                 if not is_key:
+                    if col_idx in (2, 3, 4, 5) and new_state:
+                        t1 = config1.sheet_column_types.get(s_map.sheet1_name, {}).get(c_map.col1_idx, "") if config1 else ""
+                        t2 = config2.sheet_column_types.get(s_map.sheet2_name, {}).get(c_map.col2_idx, "") if config2 else ""
+                        if any(x in t1 for x in ["Text", "Bool"]) or any(x in t2 for x in ["Text", "Bool"]):
+                            skipped_any = True
+                            continue
+                            
                     if col_idx == 1:
                         c_map.rule.check_equivalent = new_state
-                        if new_state: c_map.rule.check_tolerance = False
+                        if new_state: 
+                            c_map.rule.check_greater = False
+                            c_map.rule.check_less = False
+                            c_map.rule.check_greater_eq = False
+                            c_map.rule.check_less_eq = False
+                            c_map.rule.check_tolerance = False
                     elif col_idx == 2:
                         c_map.rule.check_greater = new_state
                         if new_state: 
+                            c_map.rule.check_equivalent = False
                             c_map.rule.check_less = False
+                            c_map.rule.check_greater_eq = False
+                            c_map.rule.check_less_eq = False
                             c_map.rule.check_tolerance = False
                     elif col_idx == 3:
                         c_map.rule.check_less = new_state
                         if new_state: 
+                            c_map.rule.check_equivalent = False
                             c_map.rule.check_greater = False
+                            c_map.rule.check_greater_eq = False
+                            c_map.rule.check_less_eq = False
                             c_map.rule.check_tolerance = False
                     elif col_idx == 4:
+                        c_map.rule.check_greater_eq = new_state
+                        if new_state: 
+                            c_map.rule.check_equivalent = False
+                            c_map.rule.check_greater = False
+                            c_map.rule.check_less = False
+                            c_map.rule.check_less_eq = False
+                            c_map.rule.check_tolerance = False
+                    elif col_idx == 5:
+                        c_map.rule.check_less_eq = new_state
+                        if new_state: 
+                            c_map.rule.check_equivalent = False
+                            c_map.rule.check_greater = False
+                            c_map.rule.check_less = False
+                            c_map.rule.check_greater_eq = False
+                            c_map.rule.check_tolerance = False
+                    elif col_idx == 6:
                         c_map.rule.check_tolerance = new_state
                         if new_state:
                             c_map.rule.check_equivalent = False
                             c_map.rule.check_greater = False
                             c_map.rule.check_less = False
+                            c_map.rule.check_greater_eq = False
+                            c_map.rule.check_less_eq = False
                             
                     # Ensure at least one option is selected
-                    if not (c_map.rule.check_equivalent or c_map.rule.check_greater or c_map.rule.check_less or c_map.rule.check_tolerance):
+                    if not (c_map.rule.check_equivalent or c_map.rule.check_greater or c_map.rule.check_less or getattr(c_map.rule, 'check_greater_eq', False) or getattr(c_map.rule, 'check_less_eq', False) or c_map.rule.check_tolerance):
                         if col_idx == 1: c_map.rule.check_equivalent = True
                         elif col_idx == 2: c_map.rule.check_greater = True
                         elif col_idx == 3: c_map.rule.check_less = True
-                        elif col_idx == 4: c_map.rule.check_tolerance = True
+                        elif col_idx == 4: c_map.rule.check_greater_eq = True
+                        elif col_idx == 5: c_map.rule.check_less_eq = True
+                        elif col_idx == 6: c_map.rule.check_tolerance = True
             
+            if skipped_any:
+                from tkinter import messagebox
+                messagebox.showinfo("Hinweis", 
+                    "Einige Spalten sind vom Typ 'Text' oder 'Boolean'. "
+                    "Für diese Spalten wurde der Größer/Kleiner-Vergleich automatisch übersprungen.")
+                    
             self._populate_tree()
             
         elif item_id.startswith("col_"):
             parts = item_id.split("_")
             s_idx = int(parts[1])
+            if parts[2] == "cross":
+                return
             r_idx = int(parts[2])
             
             s_map = self.sheet_mappings[s_idx]
@@ -456,40 +580,86 @@ class ComparisonLogicView(tk.Frame):
             
             if is_key: return # Key columns cannot be modified
             
+            # --- Absicherung: Kein Größer/Kleiner für Text/Boolean ---
+            if col_idx in (2, 3, 4, 5):
+                app = self.winfo_toplevel()
+                config1 = getattr(app, 'config1', None)
+                config2 = getattr(app, 'config2', None)
+                
+                t1 = config1.sheet_column_types.get(s_map.sheet1_name, {}).get(c_map.col1_idx, "") if config1 else ""
+                t2 = config2.sheet_column_types.get(s_map.sheet2_name, {}).get(c_map.col2_idx, "") if config2 else ""
+                
+                if any(x in t1 for x in ["Text", "Bool"]) or any(x in t2 for x in ["Text", "Bool"]):
+                    from tkinter import messagebox
+                    messagebox.showwarning("Ungültige Auswahl", 
+                        "Ein Größer/Kleiner-Vergleich ist für Spalten vom Typ 'Text' oder 'Boolean' nicht zulässig.")
+                    return
+                    
             rule = c_map.rule
             
-            if col_idx <= 4:
+            if col_idx <= 6:
                 # Checkbox/Radio button hybrid logic for this row
                 if col_idx == 1:
                     rule.check_equivalent = not rule.check_equivalent
-                    if rule.check_equivalent: rule.check_tolerance = False
+                    if rule.check_equivalent: 
+                        rule.check_greater = False
+                        rule.check_less = False
+                        rule.check_greater_eq = False
+                        rule.check_less_eq = False
+                        rule.check_tolerance = False
                 elif col_idx == 2:
                     rule.check_greater = not rule.check_greater
                     if rule.check_greater: 
+                        rule.check_equivalent = False
                         rule.check_less = False
+                        rule.check_greater_eq = False
+                        rule.check_less_eq = False
                         rule.check_tolerance = False
                 elif col_idx == 3:
                     rule.check_less = not rule.check_less
                     if rule.check_less: 
+                        rule.check_equivalent = False
                         rule.check_greater = False
+                        rule.check_greater_eq = False
+                        rule.check_less_eq = False
                         rule.check_tolerance = False
                 elif col_idx == 4:
+                    rule.check_greater_eq = not getattr(rule, 'check_greater_eq', False)
+                    if rule.check_greater_eq: 
+                        rule.check_equivalent = False
+                        rule.check_greater = False
+                        rule.check_less = False
+                        rule.check_less_eq = False
+                        rule.check_tolerance = False
+                elif col_idx == 5:
+                    rule.check_less_eq = not getattr(rule, 'check_less_eq', False)
+                    if rule.check_less_eq: 
+                        rule.check_equivalent = False
+                        rule.check_greater = False
+                        rule.check_less = False
+                        rule.check_greater_eq = False
+                        rule.check_tolerance = False
+                elif col_idx == 6:
                     rule.check_tolerance = not rule.check_tolerance
                     if rule.check_tolerance:
                         rule.check_equivalent = False
                         rule.check_greater = False
                         rule.check_less = False
+                        rule.check_greater_eq = False
+                        rule.check_less_eq = False
                         
                 # Ensure at least one option is selected
-                if not (rule.check_equivalent or rule.check_greater or rule.check_less or rule.check_tolerance):
+                if not (rule.check_equivalent or rule.check_greater or rule.check_less or getattr(rule, 'check_greater_eq', False) or getattr(rule, 'check_less_eq', False) or rule.check_tolerance):
                     if col_idx == 1: rule.check_equivalent = True
                     elif col_idx == 2: rule.check_greater = True
                     elif col_idx == 3: rule.check_less = True
-                    elif col_idx == 4: rule.check_tolerance = True
+                    elif col_idx == 4: rule.check_greater_eq = True
+                    elif col_idx == 5: rule.check_less_eq = True
+                    elif col_idx == 6: rule.check_tolerance = True
                 
                 self._populate_tree()
                 
-            elif col_idx == 5:
+            elif col_idx == 7:
                 if rule.check_tolerance:
                     new_val = simpledialog.askfloat("Toleranzwert", "Bitte Toleranzwert eingeben:", 
                                                     initialvalue=rule.tolerance_value, parent=self)
@@ -506,6 +676,7 @@ class ComparisonLogicView(tk.Frame):
         parts = item_id.split("_")
         if len(parts) < 3: return []
         s_idx = int(parts[1])
+        if parts[2] == "cross": return []
         r_idx = int(parts[2])
         
         if s_idx < len(self.sheet_mappings):

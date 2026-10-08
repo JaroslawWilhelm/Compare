@@ -142,19 +142,25 @@ class ColumnTypeDetector:
                     confidences[col_idx] = f"{round(p_bool, 1)}% Bool, {round(p_text, 1)}% Text"
                 else:
                     confidences[col_idx] = "100%"
-            else:
-                if p_numeric > 0 or p_date > 0 or p_bool > 0:
-                    types[col_idx] = "Mix"
-                    ambiguous[col_idx] = True
-                    parts = []
+            elif p_text >= threshold:
+                types[col_idx] = "Text"
+                ambiguous[col_idx] = p_text < 100.0
+                if ambiguous[col_idx]:
+                    parts = [f"{round(p_text, 1)}% Text"]
                     if p_date > 0: parts.append(f"{round(p_date, 1)}% Datum/Zeit")
                     if p_numeric > 0: parts.append(f"{round(p_numeric, 1)}% Zahl")
                     if p_bool > 0: parts.append(f"{round(p_bool, 1)}% Bool")
-                    if p_text > 0: parts.append(f"{round(p_text, 1)}% Text")
                     confidences[col_idx] = ", ".join(parts)
                 else:
-                    types[col_idx] = "Text"
-                    ambiguous[col_idx] = False
                     confidences[col_idx] = "100%"
+            else:
+                types[col_idx] = "Mix"
+                ambiguous[col_idx] = True
+                parts = []
+                if p_date > 0: parts.append(f"{round(p_date, 1)}% Datum/Zeit")
+                if p_numeric > 0: parts.append(f"{round(p_numeric, 1)}% Zahl")
+                if p_bool > 0: parts.append(f"{round(p_bool, 1)}% Bool")
+                if p_text > 0: parts.append(f"{round(p_text, 1)}% Text")
+                confidences[col_idx] = ", ".join(parts)
                     
         return types, ambiguous, confidences, date_formats

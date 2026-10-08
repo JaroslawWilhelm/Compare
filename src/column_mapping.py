@@ -27,6 +27,19 @@ class ColumnMappingView(tk.Frame):
         self.zoom_manager_left = ZoomManager(self.frame_left, zoom_id="column_mapping_panel")
         self.zoom_manager_right = ZoomManager(self.frame_right, zoom_id="column_mapping_grid")
         
+    def clear_cache(self):
+        self._cached_mappings.clear()
+        self.active_mapping_idx = None
+        self._editing_state = "none"
+        self._pending_left = None
+        self._pending_right = None
+        self.selected_left_idx = -1
+        self.selected_right_idx = -1
+        self._current_grid_data = []
+        if hasattr(self, 'grid_cols'):
+            self.grid_cols.set_data([], ["Spalte Links", "Spalte Rechts"])
+            self.grid_cols.redraw()
+
     def _setup_ui(self):
         # Top label removed upon user request to unify headers
         
@@ -817,6 +830,18 @@ class ColumnMappingView(tk.Frame):
                 self.selected_left_idx = col_idx
             else:
                 self.selected_right_idx = col_idx
+                
+            row_to_sel = -1
+            for r, c_map in enumerate(mapping.column_mappings):
+                if (side == 1 and c_map.col1_idx == col_idx) or (side == 2 and c_map.col2_idx == col_idx):
+                    row_to_sel = r
+                    break
+            
+            if row_to_sel >= 0:
+                self.grid_cols.selected_rows.clear()
+                self.grid_cols.selected_rows.add(row_to_sel)
+                self.grid_cols.scroll_to_row(row_to_sel)
+                self.grid_cols.redraw()
                 
             if self.on_cols_changed:
                 self.on_cols_changed(side)
